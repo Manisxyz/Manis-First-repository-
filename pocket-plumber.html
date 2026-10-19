@@ -13,7 +13,7 @@
   --hot: #ff6a3d;
   color-scheme: dark;
 }
-html, body { height: 100%; }
+html, body { height: 100%; overflow: hidden; touch-action: none; }
 body {
   margin: 0;
   background: var(--ink);
@@ -512,37 +512,46 @@ body {
     zr.classList.toggle('on', held.touch > 0 || held.pulse);
     thumb.style.transform = 'translateX(' + Math.round(thumbDX * 1.1) + 'px)';
   }
-  app.addEventListener('pointerdown', e => {
-    e.preventDefault(); audioInit();
+  function pDown(id, x, y) {
+    audioInit();
     if (state !== 'play') { tapAction(); return; }
     const r = app.getBoundingClientRect();
-    if (e.clientX - r.left < r.width / 2) ptrs.set(e.pointerId, { role: 'move', sx: e.clientX, sy: e.clientY, fired: false });
-    else { ptrs.set(e.pointerId, { role: 'jump' }); held.touch++; jumpDown(); }
-    try { app.setPointerCapture(e.pointerId); } catch (_) {}
+    if (x - r.left < r.width / 2) ptrs.set(id, { role: 'move', sx: x, sy: y, fired: false });
+    else { ptrs.set(id, { role: 'jump' }); held.touch++; jumpDown(); }
     ui();
-  });
-  app.addEventListener('pointermove', e => {
-    const p = ptrs.get(e.pointerId);
+  }
+  function pMove(id, x, y) {
+    const p = ptrs.get(id);
     if (!p || p.role !== 'move') return;
-    let dx = e.clientX - p.sx; const dy = e.clientY - p.sy;
-    if (dx > 40) { p.sx = e.clientX - 40; dx = 40; } else if (dx < -40) { p.sx = e.clientX + 40; dx = -40; }
+    let dx = x - p.sx; const dy = y - p.sy;
+    if (dx > 40) { p.sx = x - 40; dx = 40; } else if (dx < -40) { p.sx = x + 40; dx = -40; }
     moveDir = dx > 9 ? 1 : dx < -9 ? -1 : 0;
     thumbDX = dx;
     if (dy < -40 && !p.fired) {
       p.fired = true; jumpDown(); held.pulse = true; setTimeout(() => { held.pulse = false; ui(); }, 240);
     } else if (dy > -15) p.fired = false;
     ui();
-  });
-  function release(e) {
-    const p = ptrs.get(e.pointerId);
+  }
+  function pUp(id) {
+    const p = ptrs.get(id);
     if (!p) return;
-    ptrs.delete(e.pointerId);
+    ptrs.delete(id);
     if (p.role === 'move') { moveDir = 0; thumbDX = 0; }
     else held.touch = Math.max(0, held.touch - 1);
     ui();
   }
-  app.addEventListener('pointerup', release);
-  app.addEventListener('pointercancel', release);
+  // Raw touch events: preventDefault (non-passive) stops iOS from turning a slide into a scroll.
+  const tEach = (e, fn) => { for (const t of e.changedTouches) fn(t.identifier, t.clientX, t.clientY); };
+  const opt = { passive: false };
+  app.addEventListener('touchstart', e => { e.preventDefault(); tEach(e, pDown); }, opt);
+  app.addEventListener('touchmove', e => { e.preventDefault(); tEach(e, pMove); }, opt);
+  app.addEventListener('touchend', e => { e.preventDefault(); tEach(e, pUp); }, opt);
+  app.addEventListener('touchcancel', e => { tEach(e, pUp); }, opt);
+  // Mouse (desktop): drag on the left half to steer, click the right half to jump.
+  let mouseDown = false;
+  app.addEventListener('mousedown', e => { mouseDown = true; pDown('m', e.clientX, e.clientY); });
+  addEventListener('mousemove', e => { if (mouseDown) pMove('m', e.clientX, e.clientY); });
+  addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; pUp('m'); } });
   document.addEventListener('contextmenu', e => e.preventDefault());
 
   const KEYS = {
