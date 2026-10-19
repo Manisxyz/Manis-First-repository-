@@ -55,7 +55,7 @@ def build_level():
         put(x, 9, "=")
 
     # pipes (2 wide)
-    for px, ph in ((32, 2), (48, 3), (88, 2), (108, 4), (150, 3), (172, 2)):
+    for px, ph in ((32, 2), (48, 3), (88, 2), (108, 3), (150, 3), (172, 2)):
         for dy in range(ph):
             put(px, 15 - dy, "P")
             put(px + 1, 15 - dy, "P")
