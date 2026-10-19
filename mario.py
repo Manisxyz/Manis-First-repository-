@@ -2,9 +2,13 @@
 """Terminal Mario - a side-scrolling platformer using only the stdlib (curses).
 
 Run:  python3 mario.py
-Keys: <- -> / A D  run      SPACE / UP / W  jump      Q  quit
+Keys: A / D (or arrows)  run left / right, S / DOWN  stop,
+      SPACE / W / UP / K  jump,  Q  quit
+Phone-friendly: a tap on A or D keeps Mario running until you tap S.
+Use `python3 mario.py --hold` for keyboard-style (hold the key to run).
 """
 import curses
+import sys
 import time
 
 H = 18            # level height in tiles
@@ -94,6 +98,8 @@ class World:
     def __init__(self):
         self.grid, self.enemy_x = build_level()
         self.hi = 0
+        self.view_w, self.view_h = 60, H
+        self.latch = True      # tap-to-run (no key-up events on phones)
         self.lives = 3
         self.score = 0
         self.coins = 0
@@ -114,6 +120,8 @@ class World:
         self.cam = 0.0
         self.time_left = 300.0
         self.left_t = self.right_t = self.jump_t = 0.0
+        self.run_dir = 0
+        self.camy = 0.0
         if not keep_score:
             self.score = 0
             self.coins = 0
@@ -191,10 +199,13 @@ class World:
             return
 
         want = 0
-        if now < self.left_t:
-            want -= 1
-        if now < self.right_t:
-            want += 1
+        if self.latch:
+            want = self.run_dir
+        else:
+            if now < self.left_t:
+                want -= 1
+            if now < self.right_t:
+                want += 1
         if want:
             self.facing = want
             target = want * RUN_SPEED
@@ -246,7 +257,9 @@ class World:
             self.state = "won"
             return
         self.hi = max(self.hi, self.score)
-        self.cam = max(0.0, p.x - 20)
+        self.cam = max(0.0, p.x - self.view_w // 3)
+        vh = self.view_h
+        self.camy = max(0.0, min(H - vh, p.y - vh * 0.6))
 
 
 # -- rendering -----------------------------------------------------------
@@ -289,13 +302,16 @@ def put(scr, y, x, s, attr=0):
 def draw(scr, w, col, ascii_mode):
     scr.erase()
     sh, sw = scr.getmaxyx()
-    if sh < H + 2 or sw < 40:
-        put(scr, 0, 0, f"Terminal too small: need {max(40, 40)}x{H + 2}+")
+    if sh < 8 or sw < 24:
+        put(scr, 0, 0, "Terminal too small")
         scr.refresh()
         return
     view = min(sw - 1, 100)
+    vh = min(H, sh - 1)
+    w.view_w, w.view_h = view, vh
     cam = int(w.cam)
-    for r in range(H):
+    camy = int(w.camy)
+    for r in range(camy, camy + vh):
         for sx in range(view):
             ch = w.grid[r][cam + sx] if cam + sx < W else " "
             if ch == " ":
@@ -303,39 +319,44 @@ def draw(scr, w, col, ascii_mode):
             name, glyph = TILE[ch]
             if ascii_mode:
                 glyph = {"▒": "#", "▤": "=", "■": "X", "█": "H", "●": "o", "║": "|", "▶": ">"}.get(glyph, glyph)
-            put(scr, r + 1, sx, glyph, col.get(name, 0))
+            put(scr, r - camy + 1, sx, glyph, col.get(name, 0))
     for e in w.enemies:
         if e.alive:
             sx = int(e.x + 0.4) - cam
-            if 0 <= sx < view and 0 <= e.y < H:
-                put(scr, int(e.y + 0.5) + 1, sx, "G", col.get("goomba", 0) | curses.A_BOLD)
+            ey = int(e.y + 0.5) - camy + 1
+            if 0 <= sx < view and 1 <= ey <= vh:
+                put(scr, ey, sx, "G", col.get("goomba", 0) | curses.A_BOLD)
     p = w.player
     sx = int(p.x + 0.4) - cam
-    py = int(p.y + 0.5) + 1
-    if 0 <= sx < view and 1 <= py <= H:
+    py = int(p.y + 0.5) - camy + 1
+    if 0 <= sx < view and 1 <= py <= vh:
         put(scr, py, sx, "M", col.get("mario", 0) | curses.A_BOLD)
-    hud = (f" MARIO {w.score:06d}   COINS x{w.coins:02d}   LIVES {w.lives}"
-           f"   TIME {max(0, int(w.time_left)):03d}   HI {w.hi:06d}")
+    if sw < 60:
+        hud = f"{w.score:05d} x{w.coins:02d} L{w.lives} T{max(0, int(w.time_left)):03d}"
+    else:
+        hud = (f" MARIO {w.score:06d}   COINS x{w.coins:02d}   LIVES {w.lives}"
+               f"   TIME {max(0, int(w.time_left)):03d}   HI {w.hi:06d}")
     put(scr, 0, 0, hud, col.get("hud", 0) | curses.A_BOLD)
 
     def center(y, s, attr=curses.A_BOLD):
         put(scr, y, max(0, (view - len(s)) // 2), s, attr)
 
     if w.state == "title":
-        center(5, "T E R M I N A L   M A R I O", col.get("mario", 0) | curses.A_BOLD)
-        center(8, "<- -> / A D   run")
-        center(9, "SPACE / UP / W   jump (stomp the G's!)")
-        center(10, "Reach the flag at the end.  Q = quit")
-        center(12, "Press any key to start")
+        t = max(1, vh // 2 - 3)
+        center(t, "TERMINAL MARIO", col.get("mario", 0) | curses.A_BOLD)
+        center(t + 2, "A / D  run (tap once)")
+        center(t + 3, "S  stop   SPACE  jump")
+        center(t + 4, "Stomp the G's. Reach the flag!")
+        center(t + 6, "Tap any key to start")
     elif w.state == "dead":
-        center(8, "Ouch!  Lives left: %d" % w.lives)
+        center(vh // 2, "Ouch!  Lives left: %d" % w.lives)
     elif w.state == "over":
-        center(7, "GAME OVER")
-        center(9, "R = retry    Q = quit")
+        center(max(1, vh // 2 - 1), "GAME OVER")
+        center(vh // 2 + 1, "R = retry   Q = quit")
     elif w.state == "won":
-        center(6, "COURSE CLEAR!")
-        center(8, f"Score {w.score}")
-        center(10, "R = play again    Q = quit")
+        center(max(1, vh // 2 - 2), "COURSE CLEAR!")
+        center(vh // 2, f"Score {w.score}")
+        center(vh // 2 + 2, "R = again   Q = quit")
     scr.refresh()
 
 
@@ -347,6 +368,7 @@ def main(scr):
     import locale
     ascii_mode = "UTF" not in (locale.getpreferredencoding() or "").upper()
     w = World()
+    w.latch = "--hold" not in sys.argv
     dt = 1.0 / FPS
     nxt = time.monotonic()
     while True:
@@ -366,10 +388,12 @@ def main(scr):
                     w.state = "play"
                 continue
             if k in (curses.KEY_LEFT, ord("a"), ord("A")):
-                w.left_t, w.right_t = now + HOLD, 0.0
+                w.left_t, w.right_t, w.run_dir = now + HOLD, 0.0, -1
             elif k in (curses.KEY_RIGHT, ord("d"), ord("D")):
-                w.right_t, w.left_t = now + HOLD, 0.0
-            elif k in (curses.KEY_UP, ord(" "), ord("w"), ord("W")):
+                w.right_t, w.left_t, w.run_dir = now + HOLD, 0.0, 1
+            elif k in (curses.KEY_DOWN, ord("s"), ord("S")):
+                w.run_dir = 0
+            elif k in (curses.KEY_UP, ord(" "), ord("w"), ord("W"), ord("k"), ord("K")):
                 w.jump_t = now + 0.12
         w.update(dt, now)
         draw(scr, w, col, ascii_mode)
